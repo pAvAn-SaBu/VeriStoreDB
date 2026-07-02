@@ -32,7 +32,9 @@ ParsedCommand CLIParser::parse(int argc, char** argv) {
     // SELECT command
     auto* select_cmd = app.add_subcommand("select", "Select data from a table");
     std::string select_table;
+    std::string select_at_hash;
     select_cmd->add_option("table", select_table, "Table name")->required();
+    select_cmd->add_option("--at", select_at_hash, "Query table as it was at a specific commit hash (time-travel)");
     
     // COMMIT command
     auto* commit_cmd = app.add_subcommand("commit", "Commit current changes");
@@ -43,9 +45,21 @@ ParsedCommand CLIParser::parse(int argc, char** argv) {
     auto* log_cmd = app.add_subcommand("log", "Show commit history");
     
     // CHECKOUT command
-    auto* checkout_cmd = app.add_subcommand("checkout", "Checkout a specific commit");
+    auto* checkout_cmd = app.add_subcommand("checkout", "Hard-rewind to a specific commit (rewrites HEAD)");
     std::string checkout_hash;
     checkout_cmd->add_option("commit", checkout_hash, "Commit hash")->required();
+
+    // RESTORE command
+    auto* restore_cmd = app.add_subcommand("restore", "Safe restore: brings back an old commit as a new commit, keeping full history");
+    std::string restore_hash;
+    restore_cmd->add_option("commit", restore_hash, "Commit hash to restore")->required();
+
+    // BRANCH command
+    auto* branch_cmd = app.add_subcommand("branch", "Manage branches (list / create / switch)");
+    std::string branch_name_opt;
+    bool branch_create_flag = false;
+    branch_cmd->add_option("name", branch_name_opt, "Branch name")->required(false);
+    branch_cmd->add_flag("-b,--create", branch_create_flag, "Create a new branch at current HEAD");
     
     try {
         app.parse(argc, argv);
@@ -69,6 +83,7 @@ ParsedCommand CLIParser::parse(int argc, char** argv) {
     } else if (app.got_subcommand(select_cmd)) {
         result.cmd = Command::SELECT;
         result.table_name = select_table;
+        result.at_hash = select_at_hash;
     } else if (app.got_subcommand(commit_cmd)) {
         result.cmd = Command::COMMIT;
         result.commit_message = commit_msg;
@@ -77,6 +92,13 @@ ParsedCommand CLIParser::parse(int argc, char** argv) {
     } else if (app.got_subcommand(checkout_cmd)) {
         result.cmd = Command::CHECKOUT;
         result.commit_hash = checkout_hash;
+    } else if (app.got_subcommand(restore_cmd)) {
+        result.cmd = Command::RESTORE;
+        result.commit_hash = restore_hash;
+    } else if (app.got_subcommand(branch_cmd)) {
+        result.cmd = Command::BRANCH;
+        result.branch_name   = branch_name_opt;
+        result.branch_create = branch_create_flag;
     }
     
     return result;
