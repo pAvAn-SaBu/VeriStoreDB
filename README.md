@@ -9,7 +9,7 @@
 
 VeriStoreDB (`vsdb`) is a lightweight command-line database engine that lets you **version control your data** the same way Git versions your code.
 
-Every `insert`, every schema change — you can `commit` a snapshot, browse the `log`, and `checkout` any past state of your database. Think of it as **"Ctrl+Z for your database"**.
+Every `insert`, every schema change — you can `commit` a snapshot, browse the `log`, perform **time-travel queries**, isolate experiments into **branches**, and `restore` any past state of your database. Think of it as **"Ctrl+Z for your database"**.
 
 ---
 
@@ -20,8 +20,10 @@ Every `insert`, every schema change — you can `commit` a snapshot, browse the 
 - 🔍 **B-Tree Indexing** — Efficient in-memory indexing using a custom B-Tree implementation
 - 📸 **Commit Snapshots** — Save the full database state with a message
 - 🕓 **Commit Log** — Browse your history of commits with hashes and timestamps
-- ⏪ **Checkout** — Restore the database to any previous commit
-- 💾 **Persistent Storage** — All data and snapshots are stored on disk
+- ⏳ **Time-Travel Queries** — Run a `select` query to see data exactly as it was at a specific past commit
+- ⏪ **Safe Restore** — Restore the database to a previous state safely without losing history (creates a new commit)
+- 🌿 **Branching** — Isolate table structures and data changes in separate, isolated branches
+- 💾 **Persistent Storage** — All data, schemas, refs, and snapshots are stored on disk
 
 ---
 
@@ -32,8 +34,8 @@ VeriStoreDB/
 ├── src/
 │   ├── main.cpp              # Entry point & command dispatcher
 │   ├── cli/
-│   │   ├── cli_parser.h      # Command definitions
-│   │   └── cli_parser.cpp    # CLI11-based argument parsing
+│   │   ├── cli_parser.h      # Command definitions (CLI11 wrapper)
+│   │   └── cli_parser.cpp    # Argument and subcommand parsing
 │   ├── db/
 │   │   ├── database.h        # Database, Table, Schema, Record types
 │   │   └── database.cpp      # Core database logic & disk I/O
@@ -41,50 +43,21 @@ VeriStoreDB/
 │   │   └── btree.h           # Generic templated B-Tree implementation
 │   └── gitstore/
 │       ├── gitstore.h        # Commit structure & GitStore interface
-│       └── gitstore.cpp      # Version control engine (hash, snapshot, restore)
+│       └── gitstore.cpp      # Version control engine (hash, snapshot, branches)
 └── CMakeLists.txt            # Build config (C++17, CLI11 via FetchContent)
 ```
 
-### Module Overview
-
-| Module | Role |
-|---|---|
-| `cli/` | Parses command-line input using [CLI11](https://github.com/CLIUtils/CLI11) |
-| `db/` | Manages tables, schemas, records, and disk persistence |
-| `btree/` | Custom B-Tree for in-memory key-value indexing |
-| `gitstore/` | Git-inspired object store — hashes, snapshots, HEAD tracking |
-
----
-
-## How It Works
-
-```
-User Command (CLI)
-       ↓
-   CLIParser → ParsedCommand
-       ↓
-   Database (dispatch in main.cpp)
-       ↓
-  ┌──────────────┬─────────────────┐
-  │  Table ops   │    GitStore     │
-  │ (insert /    │ (commit / log / │
-  │   select)    │   checkout)     │
-  └──────────────┴─────────────────┘
-        ↓                ↓
-   .vsdb/data/      .vsdb/objects/
-   (table files)    (versioned snapshots)
-```
-
-The `gitstore` module mirrors Git's object model:
-- Each **commit** stores a hash, message, timestamp, parent hash, and hashes of all data files
-- Data files are snapshotted into an `objects/` directory by content hash
-- A `HEAD` file tracks the current commit
+The `gitstore` module tightly mirrors Git's object model:
+- Each **commit** stores a hash, message, timestamp, parent hash, and hashes of all data files.
+- Data files are snapshotted into an `objects/` directory by content hash.
+- Branch pointers are stored in a `refs/` directory.
+- A `HEAD` file tracks the current commit or branch reference (e.g., `ref: main`).
 
 ---
 
 ## Building
 
-**Requirements:** CMake >= 3.14, a C++17 compiler (GCC, Clang, or MSVC)
+**Requirements:** CMake >= 3.14 (up to 4.3), a C++17 compiler (GCC, Clang, or MSVC)
 
 ```bash
 # Clone the repo
@@ -104,65 +77,69 @@ cmake --build build
 
 ---
 
-## Usage
+## Usage Guide
 
-### Initialize a database
+### 1. Initialize a database
 ```bash
 vsdb init
 ```
-Creates a `.vsdb/` directory in the current folder to store all data and version history.
+Creates a folder to store your active tables (`data/`), version objects (`objects/`), and branches (`refs/`). You start on the default `main` branch.
 
-### Create a table
+### 2. Create a table
 ```bash
-vsdb create-table <table_name> --col <name>:<type> ...
+vsdb create <table_name> --columns <name>:<type> ...
 ```
 ```bash
 # Example
-vsdb create-table users --col id:int --col name:text --col age:int --col active:bool
+vsdb create users --columns id:int name:text age:int active:bool
 ```
 
-### Insert a record
-```bash
-vsdb insert <table_name> --values <val1> <val2> ...
-```
+### 3. Insert and Query Records
 ```bash
 vsdb insert users --values 1 Alice 22 true
+vsdb select users
 ```
 
-### Query a table
+### 4. Committing Changes
+Snapshot your changes to preserve them:
 ```bash
-vsdb select <table_name>
-```
-```
-id      name    age     active
--------- -------- -------- --------
-1       Alice   22      true
-
-1 rows returned
+vsdb commit -m "Added first user"
 ```
 
-### Commit the current state
+### 5. Time-Travel Queries
+Want to see what a table looked like two weeks ago, without actually reverting your database? Use the `--at` flag with a past commit hash:
 ```bash
-vsdb commit "Added first user"
+vsdb select users --at a3f9c12e
 ```
+This reads the historic snapshot entirely in-memory—your current working tables stay completely untouched!
 
-### View commit history
+### 6. Branching
+Branching allows you to create parallel, isolated versions of your database.
+
+```bash
+# List all branches (* marks the current branch)
+vsdb branch
+
+# Create a new branch pointing to the current commit
+vsdb branch -b feature_x
+
+# Switch to the new branch (safely swaps your data directory)
+vsdb branch feature_x
+```
+Any tables created or rows inserted on `feature_x` will not bleed into `main`. When you switch back to `main`, your files are safely swapped back to their `main` state.
+
+### 7. View History
 ```bash
 vsdb log
 ```
-```
-Commit: a3f9c12e...
-Date:   2026-07-02 09:15:00
-        Added first user
-```
+Shows a chronological list of commits, and points out where you currently are using `(HEAD -> branch)`.
 
-### Restore a previous state
+### 8. Safe Restore
+Messed up? You can rewind the state of the entire database to an old commit.
 ```bash
-vsdb checkout <commit_hash>
+vsdb restore <commit_hash>
 ```
-```bash
-vsdb checkout a3f9c12e
-```
+Unlike a traditional "hard checkout", `restore` is **non-destructive**. It restores your files, and then immediately wraps that restored state into a **brand-new commit**. This ensures you never orphan or lose your timeline history!
 
 ---
 
@@ -172,34 +149,22 @@ vsdb checkout a3f9c12e
 |---|---|
 | `int` | Integer values |
 | `float` | Floating-point values |
-| `text` | String values |
-| `bool` | Boolean (`true` / `false`) |
-
----
-
-## Git vs VeriStoreDB
-
-| Concept | Git | VeriStoreDB |
-|---|---|---|
-| `init` | Initialize repo | Initialize database |
-| `commit` | Snapshot source files | Snapshot database state |
-| `log` | Browse commit history | Browse database history |
-| `checkout` | Restore file state | Restore data state |
-| Object store | `.git/objects/` | `.vsdb/objects/` |
-| HEAD | Current branch tip | Current database commit |
+| `text` | String values (without spaces) |
+| `bool` | Boolean (`true` / `false` or `1` / `0`) |
 
 ---
 
 ## Roadmap
 
+- [x] Time-Travel Queries (`select --at <hash>`)
+- [x] Safe Non-Destructive Restore (`restore <hash>`)
+- [x] Branching and Isolation (`branch`)
 - [ ] `WHERE` clause filtering on `select`
 - [ ] `UPDATE` and `DELETE` operations
 - [ ] `vsdb diff <hash1> <hash2>` — compare two commits
-- [ ] `vsdb status` — show uncommitted changes
-- [ ] Branching and merging
 - [ ] SQL-like query parser
 - [ ] Data type validation on insert
-- [ ] Persistent B-Tree index
+- [ ] Persistent B-Tree index (currently in-memory only)
 
 ---
 

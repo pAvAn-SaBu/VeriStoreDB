@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.14...4.3)
 project(vsdb VERSION 1.0 LANGUAGES CXX)
 
 # C++17 required
@@ -10,7 +10,7 @@ include(FetchContent)
 FetchContent_Declare(
     cli11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-    GIT_TAG v2.3.2
+    GIT_TAG v2.4.2
 )
 FetchContent_MakeAvailable(cli11)
 

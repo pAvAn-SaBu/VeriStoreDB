@@ -111,6 +111,24 @@ int main(int argc, char** argv) {
                 return 1;
             }
             
+            // Time-travel query: --at <commit_hash>
+            if (!cmd.at_hash.empty()) {
+                std::cout << "\n[Time-travel] Viewing table '" << cmd.table_name
+                          << "' at commit " << cmd.at_hash << "\n\n";
+
+                auto [schema, records] = db.select_at(cmd.table_name, cmd.at_hash);
+
+                if (schema.columns.empty()) {
+                    return 1;
+                }
+
+                print_table(schema, records);
+                std::cout << "\n" << records.size()
+                          << " rows returned (historical snapshot — current database unchanged)\n";
+                return 0;
+            }
+
+            // Normal select
             auto table = db.get_table(cmd.table_name);
             if (!table) {
                 std::cerr << "Error: Table '" << cmd.table_name << "' not found\n";
@@ -146,8 +164,20 @@ int main(int argc, char** argv) {
                 return 0;
             }
             
-            for (const auto& commit : commits) {
-                std::cout << "Commit: " << commit.hash << "\n";
+            for (size_t i = 0; i < commits.size(); ++i) {
+                const auto& commit = commits[i];
+                if (i == 0) {
+                    std::string branch = db.get_current_branch();
+                    if (!branch.empty()) {
+                        std::cout << "Commit: " << commit.hash
+                                  << "  \033[33m(HEAD -> " << branch << ")\033[0m\n";
+                    } else {
+                        std::cout << "Commit: " << commit.hash
+                                  << "  \033[33m(HEAD)\033[0m\n";
+                    }
+                } else {
+                    std::cout << "Commit: " << commit.hash << "\n";
+                }
                 std::cout << "Date:   " << commit.timestamp << "\n";
                 std::cout << "        " << commit.message << "\n\n";
             }
@@ -163,7 +193,53 @@ int main(int argc, char** argv) {
                 return 0;
             }
             return 1;
-            
+
+        case vsdb::Command::RESTORE:
+            if (!db.is_initialized()) {
+                std::cerr << "Error: Database not initialized. Run 'vsdb init' first.\n";
+                return 1;
+            }
+            if (!db.safe_restore(cmd.commit_hash).empty()) {
+                return 0;
+            }
+            return 1;
+
+        case vsdb::Command::BRANCH: {
+            if (!db.is_initialized()) {
+                std::cerr << "Error: Database not initialized. Run 'vsdb init' first.\n";
+                return 1;
+            }
+
+            // vsdb branch -b <name>  →  create
+            if (cmd.branch_create) {
+                if (cmd.branch_name.empty()) {
+                    std::cerr << "Error: Branch name required with -b\n";
+                    return 1;
+                }
+                return db.create_branch(cmd.branch_name) ? 0 : 1;
+            }
+
+            // vsdb branch <name>  →  switch
+            if (!cmd.branch_name.empty()) {
+                return db.switch_branch(cmd.branch_name) ? 0 : 1;
+            }
+
+            // vsdb branch  →  list all branches
+            auto branches = db.list_branches();
+            if (branches.empty()) {
+                std::cout << "No branches found.\n";
+                return 0;
+            }
+            for (const auto& [name, is_current] : branches) {
+                if (is_current) {
+                    std::cout << "\033[32m* " << name << "\033[0m\n"; // green
+                } else {
+                    std::cout << "  " << name << "\n";
+                }
+            }
+            return 0;
+        }
+
         case vsdb::Command::NONE:
         default:
             std::cerr << "No valid command specified.\n";
