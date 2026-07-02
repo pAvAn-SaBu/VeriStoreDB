@@ -181,9 +181,12 @@ bool Database::initialize() {
     std::cout << "Created directories:\n";
     std::cout << "  - data/      (for table data storage)\n";
     std::cout << "  - objects/   (for version control objects)\n";
-    
+    std::cout << "  - refs/      (for branch references)\n";
+
     git_store_ = std::make_unique<GitStore>(db_root_ / "objects");
-    
+    git_store_->init_refs("main");
+    std::cout << "Initialized on branch 'main'\n";
+
     return true;
 }
 
@@ -319,6 +322,77 @@ std::vector<Record> Database::select_from(const std::string& table_name) {
     return table->select_all();
 }
 
+std::pair<TableSchema, std::vector<Record>> Database::select_at(
+    const std::string& table_name, const std::string& commit_hash) {
+
+    if (!git_store_) {
+        std::cerr << "Error: Git store not initialized\n";
+        return {};
+    }
+
+    // --- Read schema from the object store (in-memory) ---
+    std::string schema_content = git_store_->read_file_at_commit(
+        commit_hash, table_name + ".schema");
+
+    if (schema_content.empty()) {
+        std::cerr << "Error: Table '" << table_name
+                  << "' not found in commit " << commit_hash << "\n";
+        return {};
+    }
+
+    // Parse schema from string, mirroring TableSchema::load_from_file
+    TableSchema schema;
+    std::istringstream schema_ss(schema_content);
+    std::getline(schema_ss, schema.table_name);
+
+    size_t num_columns = 0;
+    schema_ss >> num_columns;
+    schema_ss.ignore();
+
+    for (size_t i = 0; i < num_columns; ++i) {
+        std::string line;
+        std::getline(schema_ss, line);
+        std::stringstream col_ss(line);
+
+        Column col;
+        std::string type_str, pk_str;
+        std::getline(col_ss, col.name, ',');
+        std::getline(col_ss, type_str, ',');
+        std::getline(col_ss, pk_str, ',');
+
+        col.type = static_cast<DataType>(std::stoi(type_str));
+        col.primary_key = (pk_str == "1");
+        schema.columns.push_back(col);
+    }
+
+    // --- Read data from the object store (in-memory) ---
+    std::string data_content = git_store_->read_file_at_commit(
+        commit_hash, table_name + ".data");
+
+    std::vector<Record> records;
+    if (!data_content.empty()) {
+        std::istringstream data_ss(data_content);
+        size_t num_records = 0;
+        data_ss >> num_records;
+        data_ss.ignore();
+
+        for (size_t i = 0; i < num_records; ++i) {
+            std::string line;
+            std::getline(data_ss, line);
+            std::stringstream row_ss(line);
+
+            Record record;
+            std::string value;
+            while (std::getline(row_ss, value, ',')) {
+                record.values.push_back(value);
+            }
+            records.push_back(record);
+        }
+    }
+
+    return {schema, records};
+}
+
 std::string Database::commit(const std::string& message) {
     if (!git_store_) {
         std::cerr << "Error: Git store not initialized\n";
@@ -359,6 +433,57 @@ bool Database::checkout(const std::string& commit_hash) {
     }
     
     return false;
+}
+
+std::string Database::safe_restore(const std::string& commit_hash) {
+    if (!git_store_) {
+        std::cerr << "Error: Git store not initialized\n";
+        return "";
+    }
+
+    auto old_head = git_store_->get_head();
+
+    std::string new_hash = git_store_->safe_restore(commit_hash, db_root_ / "data");
+
+    if (!new_hash.empty()) {
+        tables_.clear();
+        load_tables();
+
+        std::cout << "\nRestoring database to state at commit " << commit_hash << "...\n";
+        std::cout << "Created restore commit: " << new_hash << "\n";
+        if (old_head) {
+            std::cout << "  Parent: " << *old_head << " (your previous HEAD — still intact)\n";
+        }
+        std::cout << "  Message: \"Restored to " << commit_hash << "\"\n";
+        std::cout << "\nRun 'vsdb log' to see full history.\n";
+    }
+
+    return new_hash;
+}
+
+bool Database::create_branch(const std::string& name) {
+    if (!git_store_) return false;
+    return git_store_->create_branch(name);
+}
+
+bool Database::switch_branch(const std::string& name) {
+    if (!git_store_) return false;
+    if (git_store_->switch_branch(name, db_root_ / "data")) {
+        tables_.clear();
+        load_tables();
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::pair<std::string, bool>> Database::list_branches() {
+    if (!git_store_) return {};
+    return git_store_->list_branches();
+}
+
+std::string Database::get_current_branch() {
+    if (!git_store_) return "";
+    return git_store_->get_current_branch();
 }
 
 } // namespace vsdb

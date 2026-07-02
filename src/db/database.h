@@ -76,10 +76,21 @@ public:
     bool insert_into(const std::string& table_name, const Record& record);
     std::vector<Record> select_from(const std::string& table_name);
     
+    // Time-travel query: read table as it was at a specific commit (read-only, no state change)
+    std::pair<TableSchema, std::vector<Record>> select_at(
+        const std::string& table_name, const std::string& commit_hash);
+    
     // Version control operations
     std::string commit(const std::string& message);
     std::vector<Commit> get_log();
     bool checkout(const std::string& commit_hash);
+    std::string safe_restore(const std::string& commit_hash);
+
+    // Branch operations
+    bool create_branch(const std::string& name);
+    bool switch_branch(const std::string& name);
+    std::vector<std::pair<std::string, bool>> list_branches();
+    std::string get_current_branch();
     
 private:
     std::filesystem::path db_root_;
